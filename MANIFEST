@@ -1,0 +1,9 @@
+README
+MANIFEST
+Makefile.PL
+AuthTicket.pm
+test.pl
+Changes
+sample/httpd.conf
+sample/pgsql.sql
+sample/mysql.sql
