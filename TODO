@@ -1,0 +1,5 @@
+$Id: TODO,v 1.1 2001/04/13 15:53:44 mschout Exp $
+
+- It would be nice if we could link straight to the login form without going
+  through the subrequests (Possibly use config directive
+  TicketLoginDefaultURI?).
