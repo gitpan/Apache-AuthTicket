@@ -1,51 +1,52 @@
 use ExtUtils::MakeMaker;
-use ExtUtils::Manifest qw(maniread);
 
-BEGIN { require 5.004 }
+require 5.6.0;
 
-sub chk_version {
-    my ($pkg, $wanted) = @_;
+my $mp_version = mod_perl_version();
 
-    $! = 1;
-    print "Checking for $pkg";
-		print " >= $wanted" if $wanted;
-		print "...";
+my %prereq = (
+    'DBI'           => 0,
+    'Digest::MD5'   => 0,
+    'SQL::Abstract' => 0,
+    'Test::More'    => 0
+);
 
-    eval { 
-        my $p; 
-        ($p = $pkg.".pm") =~ s#::#/#g; 
-        require $p;
-    };
-
-    my $vnum = ${"${pkg}::VERSION"} || 0;
-    my $vstr = $vnum ? "found v$vnum"
-                     : "not found";
-
-    print $vnum >= $wanted ? "ok\n" : " " . $vstr . "\n";
-
-    $vnum >= $wanted;
+if ($mp_version == 2) {
+    $prereq{'Apache2::AuthCookie'} = '3.0';
+}
+else { # MP1
+    $prereq{'Apache::AuthCookie'} = '3.0';
 }
 
-#--- Check dependencies
-chk_version( 'Apache::AuthCookie' => 2.011 ) or 
-	die "\n"
-	."You need Apache::AuthCookie version 2.011 or later "
-	."to install this module\n\n";
-
-chk_version( 'DBI' => 0 ) or 
-    die "\n"
-    ."You need to have DBI installed in order to install this module\n\n";
-
-chk_version( 'Digest::MD5' => 0 ) or 
-    die "\n"
-    ."You need to have Digetst::MD5 installed in order to "
-    ."install this module\n\n";
-
-# See lib/ExtUtils/MakeMaker.pm for details of how to influence
-# the contents of the Makefile that is written.
 WriteMakefile(
     NAME          => 'Apache::AuthTicket',
-    VERSION_FROM  => 'AuthTicket.pm',
+    VERSION_FROM  => 'lib/Apache/AuthTicket.pm',
     AUTHOR        => 'Michael Schout <mschout@gkg.net>',
-    ABSTRACT      => 'Ticket based authentication system for Apache'
+    ABSTRACT      => 'Ticket based authentication system for Apache',
+    PREREQ_PM     => \%prereq
 );
+
+sub mod_perl_version {
+    eval {
+        require mod_perl2;
+    };
+    unless ($@) {
+        return 2;
+    }
+
+    eval {
+        require mod_perl;
+    };
+    unless ($@) {
+        if ($mod_perl::VERSION >= 1.99) {
+            # mod_perl 2 prior to RC5 (1.99_12 or earlier)
+            die "mod_perl 2.0.0 RC5 or later is required for this module\n";
+        }
+
+        return 1;
+    }
+
+    die "mod_perl version $mod_perl::VERSION is not supported\n";
+}
+
+# :vim set ts=4 sw=4 ai et

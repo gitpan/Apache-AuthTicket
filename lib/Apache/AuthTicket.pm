@@ -1,5 +1,5 @@
 #
-# $Id: AuthTicket.pm,v 1.18 2001/04/13 16:20:49 mschout Exp $
+# $Id: AuthTicket.pm 45 2005-06-06 04:46:10Z mschout $
 #
 
 package Apache::AuthTicket;
@@ -18,7 +18,7 @@ use constant DEBUGGING => 0;
 
 @ISA = qw(Apache::AuthCookie);
 
-$VERSION = '0.31';
+$VERSION = '0.40';
 
 # configuration items
 # PerlSetVar FooTicketDB  dbi:Pg:dbname=template1
@@ -181,7 +181,7 @@ sub logout ($$) {
     my ($class, $r) = @_;
 
     if (lc $r->dir_config('Filter') eq 'on') {
-        $r->filter_input(handle=>1);
+        $r->filter_register;
     }
 
     my $this = $class->new($r);
@@ -222,12 +222,6 @@ sub init {
     } keys %DEFAULTS;
 }
 
-sub DESTROY {
-    my ($this) = @_;
-    warn "<< DESTROY CALLED >>" if DEBUGGING;
-    $this->dbh->disconnect if defined $this->dbh;
-}
-
 sub request { shift->{_REQUEST} }
 sub dbh     { shift->{_DBH} }
 
@@ -242,7 +236,7 @@ sub dbi_connect {
         $this->_get_config_item($r, $_)
     } qw/TicketDB TicketDBUser TicketDBPassword/;
 
-    my $dbh = DBI->connect($db, $user, $pass)
+    my $dbh = DBI->connect_cached($db, $user, $pass)
         or die "DBI Connect failure: ", DBI->errstr, "\n";
 
     return $dbh;
@@ -412,7 +406,14 @@ sub make_ticket {
         'hash'    => $hash
     );
 
-    $this->save_hash($key{'hash'});
+    eval {
+        $this->save_hash($key{'hash'});
+    };
+    if ($@) {
+        warn "save_hash() failed, treating this request as invalid login.\n";
+        warn "reason: $@";
+        return;
+    }
 
     return $this->_pack_ticket(%key);
 }
