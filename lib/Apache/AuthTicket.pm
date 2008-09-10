@@ -1,5 +1,5 @@
 #
-# $Id: AuthTicket.pm 45 2005-06-06 04:46:10Z mschout $
+# $Id$
 #
 
 package Apache::AuthTicket;
@@ -18,7 +18,7 @@ use constant DEBUGGING => 0;
 
 @ISA = qw(Apache::AuthCookie);
 
-$VERSION = '0.40';
+$VERSION = '0.90_01';
 
 # configuration items
 # PerlSetVar FooTicketDB  dbi:Pg:dbname=template1
