@@ -1,7 +1,3 @@
-#
-# $Id$
-#
-
 package Apache::AuthTicket;
 
 use strict;
@@ -10,7 +6,7 @@ use vars qw($VERSION @ISA %DEFAULTS %CONFIG);
 use Apache::Constants qw(REDIRECT OK);
 use Apache::AuthCookie ();
 use DBI ();
-use Apache::AuthTicket::Util;
+use Apache::AuthTicket::Util qw(compare_password);
 
 use constant DEBUGGING => 0;
 
@@ -18,7 +14,7 @@ use constant DEBUGGING => 0;
 
 @ISA = qw(Apache::AuthCookie);
 
-$VERSION = '0.90_02';
+$VERSION = '0.90';
 
 # configuration items
 # PerlSetVar FooTicketDB  dbi:Pg:dbname=template1
@@ -70,12 +66,12 @@ sub configure {
 sub authen_cred {
     my ($class, $r, @cred) = @_;
 
-    my $this = $class->new($r);
+    my $self = $class->new($r);
 
     my ($user, $pass) = @cred;
-    my ($result, $msg) = $this->check_credentials($user, $pass);
+    my ($result, $msg) = $self->check_credentials($user, $pass);
     if ($result) {
-        return $this->make_ticket($r, $user);
+        return $self->make_ticket($r, $user);
     } else {
         return undef;
     }
@@ -86,9 +82,9 @@ sub authen_cred {
 sub authen_ses_key {
     my ($class, $r, $session_key) = @_;
 
-    my $this = $class->new($r);
-    if ($this->verify_ticket($session_key)) {
-        my %ticket = $this->_unpack_ticket($session_key);
+    my $self = $class->new($r);
+    if ($self->verify_ticket($session_key)) {
+        my %ticket = $self->_unpack_ticket($session_key);
         return $ticket{user};
     } else {
         return undef;
@@ -188,12 +184,12 @@ sub logout ($$) {
         $r->filter_register;
     }
 
-    my $this = $class->new($r);
+    my $self = $class->new($r);
 
-    $this->delete_ticket($r);
-    $this->SUPER::logout($r);
+    $self->delete_ticket($r);
+    $self->SUPER::logout($r);
 
-    $r->err_headers_out->add('Location' => $this->{TicketLogoutURI});
+    $r->err_headers_out->add('Location' => $self->{TicketLogoutURI});
     return REDIRECT;
 }
 
@@ -202,27 +198,27 @@ sub new {
     my ($class, $r) = @_;
     $class = ref $class || $class;
 
-    my $this = bless {
+    my $self = bless {
         _REQUEST => $r
     }, $class;
 
-    $this->init($r);
+    $self->init($r);
 
     #warn "After init I look like this\n";
-    #warn Dumper($this), "\n";
+    #warn Dumper($self), "\n";
 
-    return $this;
+    return $self;
 }
 
 sub init {
-    my ($this, $r) = @_;
-    $this->{_DBH} = $this->dbi_connect;
+    my ($self, $r) = @_;
+    $self->{_DBH} = $self->dbi_connect;
 
     my $auth_name = $r->auth_name;
 
     # initialize configuration
     map {
-        $this->{$_} = $this->_get_config_item($r, $_);
+        $self->{$_} = $self->_get_config_item($r, $_);
     } keys %DEFAULTS;
 }
 
@@ -230,14 +226,13 @@ sub request { shift->{_REQUEST} }
 sub dbh     { shift->{_DBH} }
 
 sub dbi_connect {
-    my ($this) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self) = @_;
 
-    my $r         = $this->request;
+    my $r         = $self->request;
     my $auth_name = $r->auth_name;
 
     my ($db, $user, $pass) = map {
-        $this->_get_config_item($r, $_)
+        $self->_get_config_item($r, $_)
     } qw/TicketDB TicketDBUser TicketDBPassword/;
 
     my $dbh = DBI->connect_cached($db, $user, $pass)
@@ -250,14 +245,13 @@ sub dbi_connect {
 #
 # return true if a username exists.
 sub check_user {
-    my ($this, $user) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $user) = @_;
 
-    my $dbh = $this->dbh;
+    my $dbh = $self->dbh;
 
     my $rows = 0;
 
-    my ($table, $user_field) = split(/:/, $this->{TicketUserTable});
+    my ($table, $user_field) = split(/:/, $self->{TicketUserTable});
     my $query = qq{
         SELECT  COUNT(*)
         FROM    $table
@@ -282,13 +276,12 @@ sub check_user {
 #
 # return the password associated with a user
 sub get_password {
-    my ($this, $user) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $user) = @_;
 
-    my $dbh = $this->dbh;
+    my $dbh = $self->dbh;
 
     my ($table, $user_field, $passwd_field) = 
-        split(/:/, $this->{TicketUserTable});
+        split(/:/, $self->{TicketUserTable});
 
     my $query = qq{
         SELECT  $passwd_field
@@ -312,35 +305,27 @@ sub get_password {
 }
 
 sub check_credentials {
-    my ($this, $user, $password) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $user, $password) = @_;
 
     my ($table, $user_field, $pass_field) = 
-        split(/:/, $this->{TicketUserTable});
+        split(/:/, $self->{TicketUserTable});
 
-    my $dbh = $this->dbh;
+    my $dbh = $self->dbh;
 
     return (undef, "Can't open database: $DBI::errstr") unless $dbh;
 
-    return (undef, "invalid account") unless $this->check_user($user);
+    return (undef, "invalid account") unless $self->check_user($user);
 
     # we might add an option for crypt or MD5 style password someday
-    my $saved_passwd = $this->get_password($user);
+    my $saved_passwd = $self->get_password($user);
 
     my $result = 0;
 
-    my $style = $this->{TicketPasswordStyle};
-    if ($style eq 'cleartext') {
-        $result = $this->_compare_password_cleartext($password, $saved_passwd);
-    } elsif ($style eq 'crypt') {
-        $result = $this->_compare_password_crypt($password, $saved_passwd);
-    } elsif ($style eq 'md5') {
-        $result = $this->_compare_password_md5($password, $saved_passwd);
-    } else {
-        die "unknown TicketPasswordStyle: $style\n";
-    }
+    my $style = $self->{TicketPasswordStyle};
 
-    return (undef, "password mismatch") unless $result;
+    unless (compare_password($style, $password, $saved_passwd)) {
+        return (undef, "password mismatch");
+    }
 
     # its valid.
     return (1, '');
@@ -351,16 +336,15 @@ sub check_credentials {
 # ($secret, $version) = $obj->fetch_secret($ver);
 #
 sub fetch_secret {
-    my ($this, $version) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $version) = @_;
 
-    my $dbh = $this->dbh;
+    my $dbh = $self->dbh;
 
     my ($secret_table, $secret_field, $secret_version_field) =
-        split(/:/, $this->{TicketSecretTable});
+        split(/:/, $self->{TicketSecretTable});
 
     unless (defined $version) {
-        $version = $this->_get_max_secret_version;
+        $version = $self->_get_max_secret_version;
     }
 
     my $query = qq{
@@ -389,21 +373,20 @@ sub fetch_secret {
 # also, put the cookie in the outgoing headers so it wil be set on the client
 #
 sub make_ticket {
-    my ($this, $r, $user_name) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $r, $user_name) = @_;
 
     my $now     = time;
-    my $expires = $now + $this->{TicketExpires} * 60;
-    my ($secret, $sec_version) = $this->fetch_secret();
+    my $expires = $now + $self->{TicketExpires} * 60;
+    my ($secret, $sec_version) = $self->fetch_secret();
 
     my @fields = ($secret, $sec_version, $now, $expires, $user_name);
 
     # only add ip if TicketCheckIP is on.
-    if ($this->_get_config_item($r, 'TicketCheckIP')) {
+    if ($self->_get_config_item($r, 'TicketCheckIP')) {
         push @fields, $r->connection->remote_ip;
     }
 
-    if ($this->_get_config_item($r, 'TicketCheckBrowser')) {
+    if ($self->_get_config_item($r, 'TicketCheckBrowser')) {
         push @fields, Apache::AuthTicket::Util::user_agent($r);
     }
 
@@ -418,7 +401,7 @@ sub make_ticket {
     );
 
     eval {
-        $this->save_hash($key{'hash'});
+        $self->save_hash($key{'hash'});
     };
     if ($@) {
         warn "save_hash() failed, treating this request as invalid login.\n";
@@ -426,19 +409,18 @@ sub make_ticket {
         return;
     }
 
-    return $this->_pack_ticket(%key);
+    return $self->_pack_ticket(%key);
 }
 
 # invalidate the ticket by expiring the cookie, and delete the hash locally
 sub delete_ticket {
-    my ($this, $r) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $r) = @_;
 
-    my $key = $this->key();
+    my $key = $self->key();
     warn "delete_ticket: key $key" if DEBUGGING;
-    my %ticket = $this->_unpack_ticket($key);
+    my %ticket = $self->_unpack_ticket($key);
 
-    $this->delete_hash($ticket{'hash'});
+    $self->delete_hash($ticket{'hash'});
 }
 
 #
@@ -447,10 +429,9 @@ sub delete_ticket {
 # return true if the ticket contains the required fields.
 #
 sub check_ticket_format {
-    my ($this, %key) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, %key) = @_;
 
-    $this->request->log_error("key is ".join(' ', %key)) if DEBUGGING;
+    $self->request->log_error("key is ".join(' ', %key)) if DEBUGGING;
     for my $param (qw(version time user expires hash)) {
         return 0 unless defined $key{$param};
     }
@@ -474,20 +455,19 @@ sub _pack_ticket {
 # Verify the ticket and return true or false.
 #
 sub verify_ticket {
-    my ($this, $key) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $key) = @_;
 
-    my $r = $this->request;
+    my $r = $self->request;
 
     warn "ticket is $key\n" if DEBUGGING;
     my ($secret, $sec_version);
-    my %ticket = $this->_unpack_ticket($key);
+    my %ticket = $self->_unpack_ticket($key);
 
-    unless ($this->check_ticket_format(%ticket)) {
+    unless ($self->check_ticket_format(%ticket)) {
         $r->subprocess_env(AuthTicketReason => 'malformed_ticket');
         return 0;
     }
-    unless ($this->is_hash_valid($ticket{'hash'})) {
+    unless ($self->is_hash_valid($ticket{'hash'})) {
         $r->subprocess_env(AuthTicketReason => 'invalid_hash');
         return 0;
     }
@@ -495,15 +475,15 @@ sub verify_ticket {
         $r->subprocess_env(AuthTicketReason => 'expired_ticket');
         return 0;
     }
-    unless (($secret, $sec_version) = $this->fetch_secret($ticket{'version'})) {
+    unless (($secret, $sec_version) = $self->fetch_secret($ticket{'version'})) {
         # can't get server secret
         $r->subprocess_env(AuthTicketReason => 'missing_secret');
         return 0;
     }
-    if ($this->_ticket_idle_timeout($ticket{'hash'})) {
+    if ($self->_ticket_idle_timeout($ticket{'hash'})) {
         # user has exceeded idle-timeout
         $r->subprocess_env(AuthTicketReason => 'idle_timeout');
-        $this->delete_hash($ticket{'hash'});
+        $self->delete_hash($ticket{'hash'});
         return 0;
     }
 
@@ -511,12 +491,12 @@ sub verify_ticket {
     # (prevents tampering with the cookie)
     my @fields = ($secret, @ticket{qw(version time expires user)});
 
-    if ($this->_get_config_item($r, 'TicketCheckIP')) {
+    if ($self->_get_config_item($r, 'TicketCheckIP')) {
         my $ip = $r->connection->remote_ip;
         push @fields, $ip;
     }
 
-    if ($this->_get_config_item($r, 'TicketCheckBrowser')) {
+    if ($self->_get_config_item($r, 'TicketCheckBrowser')) {
         push @fields, Apache::AuthTicket::Util::user_agent($r);
     }
 
@@ -531,7 +511,7 @@ sub verify_ticket {
     }
 
     # otherwise, everything is ok
-    $this->_update_ticket_timestamp($ticket{'hash'});
+    $self->_update_ticket_timestamp($ticket{'hash'});
     $r->connection->user($ticket{'user'});
     return 1;
 }
@@ -539,12 +519,12 @@ sub verify_ticket {
 ########## SERVER SIDE HASH MANAGEMENT METHODS
 
 sub _update_ticket_timestamp {
-    my ($this, $hash) = @_;
+    my ($self, $hash) = @_;
 
-    my $time = $this->request->request_time;
-    my $dbh = $this->dbh;
+    my $time = $self->request->request_time;
+    my $dbh = $self->dbh;
 
-    my ($table, $tick_field, $ts_field) = split(':', $this->{TicketTable});
+    my ($table, $tick_field, $ts_field) = split(':', $self->{TicketTable});
 
     my $query = qq{
         UPDATE $table
@@ -569,13 +549,13 @@ sub _update_ticket_timestamp {
 # return true if the ticket table timestamp is older than the IdleTimeout
 # value.
 sub _ticket_idle_timeout {
-    my ($this, $hash) = @_;
+    my ($self, $hash) = @_;
 
-    my $idle = $this->{TicketIdleTimeout} * 60;
+    my $idle = $self->{TicketIdleTimeout} * 60;
     return 0 unless $idle;       # if not timeout set, its still valid.
 
-    my $db_time = $this->{DBTicketTimeStamp};
-    my $time = $this->request->request_time;
+    my $db_time = $self->{DBTicketTimeStamp};
+    my $time = $self->request->request_time;
     if (DEBUGGING) {
         warn "Last activity: ", ($time - $db_time), " secs ago\n";
         warn "Fail if thats > ", ($idle), "\n";
@@ -593,11 +573,10 @@ sub _ticket_idle_timeout {
 # save the ticket hash in the db
 #
 sub save_hash {
-    my ($this, $hash) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $hash) = @_;
 
-    my ($table, $tick_field, $ts_field) = split(/:/, $this->{TicketTable});
-    my $dbh = $this->dbh;
+    my ($table, $tick_field, $ts_field) = split(/:/, $self->{TicketTable});
+    my $dbh = $self->dbh;
 
     my $query = qq{
         INSERT INTO $table ($tick_field, $ts_field)
@@ -606,7 +585,7 @@ sub save_hash {
 
     eval {
         my $sth = $dbh->prepare($query);
-        $sth->execute($hash, $this->request->request_time);
+        $sth->execute($hash, $self->request->request_time);
         $dbh->commit unless $dbh->{AutoCommit};
     };
     if ($@) {
@@ -619,11 +598,10 @@ sub save_hash {
 # delete the ticket hash from the db
 #
 sub delete_hash {
-    my ($this, $hash) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $hash) = @_;
 
-    my ($table, $tick_field) = split(/:/, $this->{TicketTable});
-    my $dbh = $this->dbh;
+    my ($table, $tick_field) = split(/:/, $self->{TicketTable});
+    my $dbh = $self->dbh;
 
     my $query = qq{
         DELETE
@@ -646,11 +624,10 @@ sub delete_hash {
 # return TRUE if the hash is in the db
 #
 sub is_hash_valid {
-    my ($this, $hash) = @_;
-    $this->_log_entry if DEBUGGING;
+    my ($self, $hash) = @_;
 
-    my ($table, $tick_field, $ts_field) = split(/:/, $this->{TicketTable});
-    my $dbh = $this->dbh;
+    my ($table, $tick_field, $ts_field) = split(/:/, $self->{TicketTable});
+    my $dbh = $self->dbh;
 
     my $query = qq{
         SELECT  $tick_field, $ts_field
@@ -663,7 +640,7 @@ sub is_hash_valid {
         my $sth = $dbh->prepare($query);
         $sth->execute($hash);
         ($db_hash, $ts) = $sth->fetchrow_array;
-        $this->{DBTicketTimeStamp} = $ts;   # cache for later use.
+        $self->{DBTicketTimeStamp} = $ts;   # cache for later use.
     };
     if ($@) {
         $dbh->rollback;
@@ -673,48 +650,13 @@ sub is_hash_valid {
     return (defined $db_hash and $db_hash eq $hash) ? 1 : 0;
 }
 
-# PRIVATE METHODS ############################################################
-
-# logs entry into methods
-sub _log_entry {
-    my ($this) = @_;
-    my ($package, $filename, $line, $subroutine) = caller(1);
-    $this->request->log_error("ENTRY $subroutine [line $line]");
-}
-
-# compare cleartext style passwords
-sub _compare_password_cleartext {
-    my ($this, $clearpass, $saved_pass) = @_;
-    $this->_log_entry if DEBUGGING;
-
-    return $clearpass eq $saved_pass;
-}
-
-# compare crypt() style passwords
-sub _compare_password_crypt {
-    my ($this, $clearpass, $saved_pass) = @_;
-    $this->_log_entry if DEBUGGING;
-
-    my $test_pass = crypt($clearpass, $saved_pass);
-    return $test_pass eq $saved_pass;
-}
-
-# compare md5 style passwords
-sub _compare_password_md5 {
-    my ($this, $clearpass, $saved_pass) = @_;
-    $this->_log_entry if DEBUGGING;
-
-    my $test_pass = Apache::AuthTicket::Util::hash_for($clearpass);
-    return $test_pass eq $saved_pass;
-}
-
 sub _get_max_secret_version {
-    my ($this) = @_;
+    my ($self) = @_;
 
     my ($secret_table, $secret_field, $secret_version_field) =
-        split(/:/, $this->{TicketSecretTable});
+        split(/:/, $self->{TicketSecretTable});
 
-    my $dbh = $this->dbh;
+    my $dbh = $self->dbh;
 
     my $query = qq{
         SELECT MAX($secret_version_field)
@@ -1171,7 +1113,7 @@ This method connects to the TicketDB data source. You might overload this
 method if you have a common DBI connection function. For example:
 
  sub dbi_connect {
-     my ($this) = @_;
+     my ($self) = @_;
      return Foo::dbi_connect();
  }
 
@@ -1197,6 +1139,26 @@ work!
 =head1 AUTHOR
 
 Michael Schout <mschout@gkg.net>
+
+=head1 COPYRIGHT & LICENSE
+
+Copyright 2000-2009 Michael Schout.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of either:
+
+=over 4
+
+=item *
+
+the GNU General Public License as published by the Free Software
+Foundation; either version 1, or (at your option) any later version, or
+
+=item *
+
+the Artistic License version 2.0.
+
+=back
 
 =head1 SEE ALSO
 
