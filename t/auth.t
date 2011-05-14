@@ -5,8 +5,7 @@
 use strict;
 use warnings FATAL => 'all';
 use lib qw(t/lib);
-use Apache::Test ':withtestmore';
-use Test::More;
+use Apache::Test '-withtestmore';
 use Apache::TestRequest qw(GET POST);
 
 if (not have_module('DBD::SQLite')) {
@@ -22,7 +21,7 @@ else {
 # must match value in SQLite DB
 my $Secret = 'mvkj39vek@#$R*njdea9@#';
 
-use_ok('Apache::AuthTicket::Util');
+use_ok('Apache::AuthTicket::Base');
 
 Apache::TestRequest::user_agent(
     cookie_jar            => {},
@@ -130,7 +129,7 @@ sub check_hash {
         push @fields, Apache::TestRequest::user_agent()->agent;
     }
 
-    my $hash = Apache::AuthTicket::Util::hash_for(@fields);
+    my $hash = Apache::AuthTicket::Base->hash_for(@fields);
 
     unless ($hash eq $ticket{hash}) {
         diag "Hash mismatch: $hash != $ticket{hash}";
